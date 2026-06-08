@@ -1,0 +1,29 @@
+schema_version = "1.0.0"
+
+id             = "nolan_cinematics"
+version        = "1.0.0"
+name           = "NolanCinematics"
+tagline        = "Full Nolan/Pfister/van Hoytema cinematography pipeline — format, lens, anamorphic DOF, compositor, and per-film grade."
+maintainer     = "AGW Entertainment"
+type           = "add-on"
+
+# Blender version range
+blender_version_min = "3.0.0"
+blender_version_max = "5.1.0"
+
+# Tags shown on the Extensions platform and SuperHive
+tags = ["Render", "Camera", "Compositing", "cinematics", "color-grade"]
+
+license = ["SPDX:MIT"]
+
+# Brief description shown in the Extensions browser
+description    = """
+Replicates the full cinematographic pipeline of six Christopher Nolan productions inside Blender.
+
+Select a film — Batman Begins, The Dark Knight, TDKR, Interstellar, Dunkirk, or Oppenheimer — and hit QUICK SETUP to configure your camera sensor, focal length, anamorphic DOF bokeh ratio, and build a complete compositor node chain: ASC CDL film grade, shadow crush, lens distortion, chromatic aberration, anamorphic flare streaks, and vignette. All parameters update live via N-Panel sliders without requiring a compositor rebuild.
+
+Covers Wally Pfister ASC and Hoyte van Hoytema FSF NSC. Five output formats: Anamorphic Scope HD/2K/4K (2.39:1) and full IMAX 1.43:1 2K/4K.
+"""
+
+[permissions]
+  # No network, file system, or clipboard access required
