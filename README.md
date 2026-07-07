@@ -2,13 +2,13 @@
 
 **Version 1.0.0 · AGW Entertainment**
 
-> *The complete cinematographic pipeline of Christopher Nolan productions — inside Blender.*
+> *The complete cinematographic pipeline of Christopher Nolan productions inside Blender.*
 
 ---
 
 ## What It Does
 
-NolanCinematics replicates the full optical and photochemical pipeline of six Nolan/Pfister/van Hoytema productions in a single N-Panel tab. One click configures your camera sensor, lens focal length, anamorphic DOF bokeh, and builds a complete compositor node chain — color grade, shadow crush, lens distortion, chromatic aberration, anamorphic flare streaks, and vignette — tuned to the specific photographic character of each film.
+NolanCinematics replicates the full optical and photochemical pipeline of six Nolan/Pfister/van Hoytema productions in a single N-Panel tab. One click configures your camera sensor, lens focal length, anamorphic DOF bokeh, and builds a complete compositor node chain, color grade, shadow crush, lens distortion, chromatic aberration, anamorphic flare streaks, and vignette tuned to the specific photographic character of each film.
 
 All compositor parameters update live via slider; no rebuilds required during shot refinement.
 
@@ -50,7 +50,7 @@ Each stage is independently toggleable and builds as prefixed `NC_` nodes that s
 All Per-Shot Controls sliders (exposure, grade strength, saturation, shadow crush, flare, distortion, chromatic aberration, bokeh ratio, vignette) write directly to the active NC_ nodes in real time. No rebuild needed during a shot.
 
 ### Lighting Notes
-Per-film lighting reference drawn from production interviews — motivated sources, practical color temperature, key-to-fill ratios — displayed in-panel per selected film.
+Per-film lighting reference drawn from production interviews, motivated sources, practical color temperature, key-to-fill ratios, displayed in-panel per selected film.
 
 ---
 
