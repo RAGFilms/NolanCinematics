@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+
+## [1.1.0] - 2026-07-06
+### Added
+- Blender 5.x compositor compatibility layer (new _b5_* node builders) so the full optical chain rebuilds correctly on Blender 5.x.
+### Fixed
+- Compositor node graph no longer fails to build on Blender 5.x due to renamed node types and changed socket names.
+### Changed
+- Supported Blender range raised to cover the 5.1.x line (blender_version_max 5.2.0).
+- Author credit standardized to AGW Entertainment.
+
 ## [1.0.0] — 2025
 
 ### Initial Release

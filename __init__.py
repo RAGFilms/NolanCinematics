@@ -9,14 +9,14 @@ Covers: Batman Begins, The Dark Knight, TDKR, Interstellar,
         Dunkirk, Oppenheimer.
 
 Compatible: Blender 3.x / 4.x / 5.x
-Author:     AGW ENTERTAINMENT
+Author:     AGW Entertainment
 Version:    1.0.0
 """
 
 bl_info = {
     "name":        "NolanCinematics",
-    "author":      "AGW ENTERTAINMENT",
-    "version":     (1, 0, 0),
+    "author":      "AGW Entertainment",
+    "version":     (1, 1, 0),
     "blender":     (3, 0, 0),
     "location":    "3D Viewport › N-Panel › NolanCinematics",
     "description": "Full Nolan/Pfister/van Hoytema cinematography pipeline — "
@@ -280,13 +280,151 @@ def _clear_nc_nodes(tree):
             tree.nodes.remove(node)
 
 
+
+
+# ================================================================
+#  BLENDER 5.x COMPOSITOR COMPATIBILITY  (AGW Entertainment)
+#  scene.use_nodes / scene.node_tree were removed in Blender 5.0.
+#  The compositor now lives in scene.compositing_node_group and the
+#  Composite node was replaced by the Group Output node. Glare
+#  settings moved from properties to input sockets in 4.4+.
+# ================================================================
+
+def _b5_comp_tree(scene, create=False):
+    if hasattr(scene, "compositing_node_group"):
+        tree = scene.compositing_node_group
+        if tree is None and create:
+            tree = bpy.data.node_groups.new("Compositing Nodes", "CompositorNodeTree")
+            scene.compositing_node_group = tree
+        if tree is not None and create:
+            has_out = any(getattr(it, "in_out", None) == 'OUTPUT'
+                          for it in tree.interface.items_tree
+                          if it.item_type == 'SOCKET')
+            if not has_out:
+                tree.interface.new_socket("Image", in_out='OUTPUT',
+                                          socket_type='NodeSocketColor')
+        return tree
+    if create:
+        scene.use_nodes = True
+    return scene.node_tree if getattr(scene, "use_nodes", False) or create else None
+
+
+def _b5_group_output(tree):
+    out = next((n for n in tree.nodes if n.bl_idname in
+                ('NodeGroupOutput', 'CompositorNodeComposite')), None)
+    if out is None:
+        try:
+            out = tree.nodes.new('NodeGroupOutput')
+        except RuntimeError:
+            out = tree.nodes.new('CompositorNodeComposite')
+    return out
+
+
+def _b5_input(node, key, value):
+    sock = node.inputs.get(key)
+    if sock is None:
+        sock = next((s for s in node.inputs if s.identifier == key), None)
+    if sock is None:
+        return False
+    try:
+        sock.default_value = value
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _b5_rgba(v):
+    v = tuple(v)
+    return v + (1.0,) if len(v) == 3 else v
+
+
+def _b5_colorbalance(node, lift=None, gamma=None, gain=None):
+    if 'Type' in node.inputs:                       # Blender 5.x sockets
+        _b5_input(node, 'Type', 'Lift/Gamma/Gain')
+        if lift  is not None: _b5_input(node, 'Color Lift',  _b5_rgba(lift))
+        if gamma is not None: _b5_input(node, 'Color Gamma', _b5_rgba(gamma))
+        if gain  is not None: _b5_input(node, 'Color Gain',  _b5_rgba(gain))
+    else:                                           # legacy properties
+        node.correction_method = 'LIFT_GAMMA_GAIN'
+        if lift  is not None: node.lift  = tuple(lift)[:3]
+        if gamma is not None: node.gamma = tuple(gamma)[:3]
+        if gain  is not None: node.gain  = tuple(gain)[:3]
+
+
+def _b5_blur(node, size_x, size_y):
+    if 'Type' in node.inputs:                       # Blender 5.x sockets
+        _b5_input(node, 'Type', 'Gaussian')
+        _b5_input(node, 'Size', (float(size_x), float(size_y)))
+    else:                                           # legacy properties
+        node.filter_type  = 'GAUSS'
+        node.size_x       = int(size_x)
+        node.size_y       = int(size_y)
+        node.use_relative = False
+
+
+def _b5_mixrgb_idname():
+    return 'CompositorNodeMixRGB' if hasattr(bpy.types, 'CompositorNodeMixRGB') else 'ShaderNodeMix'
+
+
+def _b5_mix(nodes, blend='MIX', name=None, label=None):
+    node = nodes.new(_b5_mixrgb_idname())
+    if node.bl_idname == 'ShaderNodeMix':
+        node.data_type = 'RGBA'
+    node.blend_type = blend
+    if name:  node.name  = name
+    if label: node.label = label
+    return node
+
+
+def _b5_mix_sockets(node):
+    if node.bl_idname == 'ShaderNodeMix':
+        fac = next(s for s in node.inputs  if s.identifier == 'Factor_Float')
+        a   = next(s for s in node.inputs  if s.identifier == 'A_Color')
+        b   = next(s for s in node.inputs  if s.identifier == 'B_Color')
+        res = next(s for s in node.outputs if s.identifier == 'Result_Color')
+    else:
+        fac, a, b = node.inputs[0], node.inputs[1], node.inputs[2]
+        res = node.outputs['Image']
+    return fac, a, b, res
+
+
+def _b5_ellipse(node, w, h):
+    if 'Size' in node.inputs:                       # Blender 5.x sockets
+        node.inputs['Size'].default_value = (w, h)
+    else:                                           # legacy properties
+        node.width, node.height = w, h
+
+
+def _b5_glare(node, values):
+    legacy_map = {'Type': 'glare_type', 'Streaks': 'streaks',
+                  'Streaks Angle': 'angle_offset', 'Threshold': 'threshold',
+                  'Fade': 'fade', 'Iterations': 'iterations',
+                  'Color Modulation': 'color_modulation', 'Size': 'size',
+                  'Quality': 'quality'}
+    for key, val in values.items():
+        sock = node.inputs.get(key)
+        if sock is not None:
+            try:
+                sock.default_value = val
+                continue
+            except (TypeError, ValueError):
+                pass
+        if key == 'Strength' and hasattr(node, 'mix'):
+            node.mix = max(-1.0, min(1.0, val * 2.0 - 1.0))
+            continue
+        legacy = legacy_map.get(key)
+        if legacy and hasattr(node, legacy):
+            try:
+                setattr(node, legacy, val.upper().replace(' ', '_') if isinstance(val, str) else val)
+            except Exception:
+                pass
+
 def build_compositor(context):
     scene  = context.scene
     props  = scene.nolan_cinematics
     grade  = FILM_GRADES.get(props.film_grade, FILM_GRADES['TDK'])
 
-    scene.use_nodes = True
-    tree   = scene.node_tree
+    tree   = _b5_comp_tree(scene, create=True)
     nodes  = tree.nodes
     links  = tree.links
 
@@ -294,15 +432,12 @@ def build_compositor(context):
 
     # Anchor nodes — locate or create
     rl = next((n for n in nodes if n.type == 'R_LAYERS'),  None)
-    co = next((n for n in nodes if n.type == 'COMPOSITE'), None)
-
     if rl is None:
         rl          = nodes.new('CompositorNodeRLayers')
         rl.location = (0, 300)
 
-    if co is None:
-        co          = nodes.new('CompositorNodeComposite')
-        co.location = (2600, 300)
+    co          = _b5_group_output(tree)
+    co.location = (2600, 300)
 
     x   = rl.location.x + 340
     y   = rl.location.y
@@ -329,17 +464,12 @@ def build_compositor(context):
         gl.name             = "NC_AnamorphicFlare"
         gl.label            = "NC · Anamorphic Flare"
         gl.location         = (x, y)
-        gl.glare_type       = 'STREAKS'
-        gl.streaks          = 2
-        gl.angle_offset     = 0.0
-        gl.threshold        = 0.88
-        gl.fade             = 0.92
-        gl.iterations       = 3
-        try:
-            gl.color_modulation = 0.15
-        except AttributeError:
-            pass  # renamed in some 4.x builds
-        gl.mix = -1.0 + (props.flare_intensity * 0.65)
+        _b5_glare(gl, {
+            'Type': 'Streaks', 'Streaks': 2, 'Streaks Angle': 0.0,
+            'Threshold': 0.88, 'Fade': 0.92, 'Iterations': 3,
+            'Color Modulation': 0.15,
+            'Strength': max(0.0, min(1.0, props.flare_intensity * 0.325)),
+        })
         links.new(prev, gl.inputs['Image'])
         prev = gl.outputs['Image']
         x   += GAP
@@ -350,11 +480,9 @@ def build_compositor(context):
         cb.name                 = "NC_FilmGrade"
         cb.label                = f"NC · Grade · {grade['name']}"
         cb.location             = (x, y)
-        cb.correction_method    = 'LIFT_GAMMA_GAIN'
-        # Blender 4.x uses 3-component RGB tuples (not RGBA)
-        cb.lift                 = grade['lift']
-        cb.gamma                = grade['gamma']
-        cb.gain                 = grade['gain']
+        # FILM_GRADES lift values are offsets around 0; the lift wheel is neutral at 1.0
+        _b5_colorbalance(cb, lift=[1.0 + v for v in grade['lift']],
+                         gamma=grade['gamma'], gain=grade['gain'])
         links.new(prev, cb.inputs['Image'])
         prev = cb.outputs['Image']
         x   += GAP
@@ -379,13 +507,10 @@ def build_compositor(context):
         sc.name              = "NC_ShadowCrush"
         sc.label             = "NC · Shadow Crush"
         sc.location          = (x, y)
-        sc.correction_method = 'LIFT_GAMMA_GAIN'
-        sc.inputs['Fac'].default_value = 0.5   # 0.5 = subtle crush; 1.0 is too aggressive
+        _b5_input(sc, 'Fac', 0.5)   # 0.5 = subtle crush; 1.0 is too aggressive
         crush = grade['shadow_lift'] * props.shadow_crush_amount
-        # 3-component RGB tuples for Blender 4.x
-        sc.lift  = (crush, crush, crush)
-        sc.gamma = (1.0, 1.0, 1.0)
-        sc.gain  = (1.0, 1.0, 1.0)
+        _b5_colorbalance(sc, lift=(1.0 + crush, 1.0 + crush, 1.0 + crush),
+                         gamma=(1.0, 1.0, 1.0), gain=(1.0, 1.0, 1.0))
         links.new(prev, sc.inputs['Image'])
         prev = sc.outputs['Image']
         x   += GAP
@@ -399,29 +524,24 @@ def build_compositor(context):
         em.name     = "NC_VignetteMask"
         em.label    = "NC · Vignette Mask"
         em.location = (vx, vy)
-        em.width    = props.vignette_size
-        em.height   = props.vignette_size * 0.72
+        _b5_ellipse(em, props.vignette_size, props.vignette_size * 0.72)
 
         bl              = nodes.new('CompositorNodeBlur')
         bl.name         = "NC_VignetteBlur"
         bl.label        = "NC · Vignette Blur"
         bl.location     = (vx + GAP, vy)
-        bl.filter_type  = 'GAUSS'
-        bl.size_x       = 130
-        bl.size_y       = 130
-        bl.use_relative = False
+        _b5_blur(bl, 130, 130)
         links.new(em.outputs['Mask'], bl.inputs['Image'])
 
         # Mix multiply: image × mask = bright center, dark edges
-        mx             = nodes.new('CompositorNodeMixRGB')
-        mx.name        = "NC_VignetteMix"
-        mx.label       = "NC · Vignette Mix"
+        mx             = _b5_mix(nodes, blend='MULTIPLY',
+                                 name="NC_VignetteMix", label="NC · Vignette Mix")
         mx.location    = (x, y)
-        mx.blend_type  = 'MULTIPLY'
-        mx.inputs[0].default_value = props.vignette_intensity  # Fac
-        links.new(prev,                mx.inputs[1])
-        links.new(bl.outputs['Image'], mx.inputs[2])
-        prev = mx.outputs['Image']
+        mx_fac, mx_a, mx_b, mx_res = _b5_mix_sockets(mx)
+        mx_fac.default_value = props.vignette_intensity
+        links.new(prev,                mx_a)
+        links.new(bl.outputs['Image'], mx_b)
+        prev = mx_res
         x   += GAP * 2
 
     # ── 6 · Output Nodes ──────────────────────────────────────────
@@ -447,8 +567,9 @@ def build_compositor(context):
 def _nc_node(context, name):
     """Return a compositor node by name, or None."""
     scene = context.scene
-    if scene.use_nodes and scene.node_tree:
-        return scene.node_tree.nodes.get(name)
+    tree = _b5_comp_tree(scene)
+    if tree:
+        return tree.nodes.get(name)
     return None
 
 
@@ -456,19 +577,19 @@ def _upd_saturation(self, context):
     node = _nc_node(context, 'NC_Saturation')
     if node:
         grade = FILM_GRADES.get(self.film_grade, {})
-        node.inputs[2].default_value = grade.get('saturation', 1.0) * self.saturation_mult
+        _b5_input(node, 'Saturation', grade.get('saturation', 1.0) * self.saturation_mult)
 
 
 def _upd_grade_fac(self, context):
     node = _nc_node(context, 'NC_FilmGrade')
     if node:
-        node.inputs[0].default_value = self.grade_fac
+        _b5_input(node, 'Fac', self.grade_fac)
 
 
 def _upd_shadow_fac(self, context):
     node = _nc_node(context, 'NC_ShadowCrush')
     if node:
-        node.inputs[0].default_value = self.shadow_crush_fac
+        _b5_input(node, 'Fac', self.shadow_crush_fac)
 
 
 def _upd_shadow_amount(self, context):
@@ -476,13 +597,13 @@ def _upd_shadow_amount(self, context):
     if node:
         grade = FILM_GRADES.get(self.film_grade, {})
         crush = grade.get('shadow_lift', -0.06) * self.shadow_crush_amount
-        node.lift = (crush, crush, crush)
+        _b5_colorbalance(node, lift=(1.0 + crush, 1.0 + crush, 1.0 + crush))
 
 
 def _upd_flare(self, context):
     node = _nc_node(context, 'NC_AnamorphicFlare')
     if node:
-        node.mix = -1.0 + (self.flare_intensity * 0.65)
+        _b5_glare(node, {'Strength': max(0.0, min(1.0, self.flare_intensity * 0.325))})
 
 
 def _upd_distortion(self, context):
@@ -508,14 +629,13 @@ def _upd_chromatic(self, context):
 def _upd_vignette_intensity(self, context):
     node = _nc_node(context, 'NC_VignetteMix')
     if node:
-        node.inputs[0].default_value = self.vignette_intensity
+        _b5_mix_sockets(node)[0].default_value = self.vignette_intensity
 
 
 def _upd_vignette_size(self, context):
     mask = _nc_node(context, 'NC_VignetteMask')
     if mask:
-        mask.width  = self.vignette_size
-        mask.height = self.vignette_size * 0.72
+        _b5_ellipse(mask, self.vignette_size, self.vignette_size * 0.72)
 
 
 def _upd_exposure(self, context):
@@ -753,8 +873,9 @@ class NC_OT_RebuildCompositor(Operator):
 
     def execute(self, context):
         scene = context.scene
-        if scene.use_nodes and scene.node_tree:
-            _clear_nc_nodes(scene.node_tree)
+        tree = _b5_comp_tree(scene)
+        if tree:
+            _clear_nc_nodes(tree)
         build_compositor(context)
         self.report({'INFO'}, "NolanCinematics compositor rebuilt.")
         return {'FINISHED'}
@@ -767,8 +888,9 @@ class NC_OT_ClearCompositor(Operator):
 
     def execute(self, context):
         scene = context.scene
-        if scene.use_nodes and scene.node_tree:
-            _clear_nc_nodes(scene.node_tree)
+        tree = _b5_comp_tree(scene)
+        if tree:
+            _clear_nc_nodes(tree)
         self.report({'INFO'}, "NolanCinematics nodes cleared.")
         return {'FINISHED'}
 
@@ -944,8 +1066,9 @@ class NC_PT_ShotControls(Panel):
         # ── Status strip ──────────────────────────────────────────
         layout.separator()
         scene = context.scene
-        if scene.use_nodes and scene.node_tree:
-            nc_nodes = [n for n in scene.node_tree.nodes if n.name.startswith("NC_")]
+        tree = _b5_comp_tree(scene)
+        if tree:
+            nc_nodes = [n for n in tree.nodes if n.name.startswith("NC_")]
             if nc_nodes:
                 layout.label(text=f"● {len(nc_nodes)} NC nodes live", icon='CHECKMARK')
             else:
@@ -989,8 +1112,9 @@ class NC_PT_Compositor(Panel):
 
         # ── Status ────────────────────────────────────────────────
         scene = context.scene
-        if scene.use_nodes and scene.node_tree:
-            nc_nodes = [n for n in scene.node_tree.nodes if n.name.startswith("NC_")]
+        tree = _b5_comp_tree(scene)
+        if tree:
+            nc_nodes = [n for n in tree.nodes if n.name.startswith("NC_")]
             if nc_nodes:
                 layout.label(text=f"● {len(nc_nodes)} NC nodes active", icon='CHECKMARK')
             else:
